@@ -21,7 +21,7 @@
  * Core file handler
  *
  * Example usage:
- * echo "|/usr/bin/handle_core -e %p -d /home/core -m 10" > \
+ * echo "|/usr/bin/handle_core -e %e -d /home/core -m 10" > \
  * 	/proc/sys/kernel/core_pattern
  */
 
@@ -71,16 +71,17 @@ static int unlink_core(const char *core_dir)
 }
 
 /* Print the new core name into a buffer of size PATH_MAX */
-static void get_core_name(const char *core_dir, char *core_name)
+static void get_core_name(const char *core_dir, const char *exe_name,
+			  char *core_name)
 {
 	struct tm *tm;
 	struct tm tm_buf;
 	time_t now;
 	time(&now);
 	tm = localtime_r(&now, &tm_buf);
-	snprintf(core_name, PATH_MAX, "%s/core.%d-%lld-%lld_%lld", core_dir, 
+	snprintf(core_name, PATH_MAX, "%s/core.%d-%lld-%lld_%lld.%s", core_dir,
 			tm->tm_year, (long long)tm->tm_mon, (long long)tm->tm_mday,
-			(long long)now);
+			(long long)now, exe_name);
 }
 
 static void usage(void)
@@ -94,14 +95,14 @@ static void usage(void)
 ");
 }
 
-static void parse_options(int argc, char **argv, int *max_cores,
+static int parse_options(int argc, char **argv, int *max_cores,
 			  char **exe_name, char **core_dir)
 {
 	int c;
 	*max_cores = 10;
 	*exe_name = NULL;
 	*core_dir = "/var/core";
-	while ((c = getopt(argc, argv, "d:hm:")) != -1) {
+	while ((c = getopt(argc, argv, "d:e:hm:")) != -1) {
 		switch (c) {
 		case 'd':
 			*core_dir = optarg;
@@ -119,26 +120,26 @@ static void parse_options(int argc, char **argv, int *max_cores,
 				fprintf(stderr, "handle_core: invalid argument "
 					"for max_cores: %s. Please give a number "
 					"greater than 0.\n", optarg);
-				exit(1);
+				return 1;
 			}
 			break;
 		default:
 			fprintf(stderr, "handle_core: invalid usage\n\n");
-			usage();
-			exit(1);
+			return 1;
 			break;
 		}
 	}
 	if (*exe_name == NULL) {
 		fprintf(stderr, "handle_core: you must supply the executable "
 			"name with -e. Try -h for help.\n");
-		exit(1);
+		return 1;
 	}
+	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	int done = 0;
+	int ret, done = 0;
 	char *exe_name, *core_dir;
 	char core_name[PATH_MAX];
 	FILE *fp;
@@ -146,8 +147,12 @@ int main(int argc, char **argv)
 	int max_cores;
 
 	/* Write the core to a file */
-	parse_options(argc, argv, &max_cores, &exe_name, &core_dir);
-	get_core_name(core_dir, core_name);
+	ret = parse_options(argc, argv, &max_cores, &exe_name, &core_dir);
+	if (ret) {
+		syslog(LOG_USER | LOG_ERR, "parse_options error\n");
+		return 1;
+	}
+	get_core_name(core_dir, exe_name, core_name);
 	fp = fopen(core_name, "w");
 	if (!fp) {
 		int err = errno;
