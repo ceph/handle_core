@@ -80,7 +80,7 @@ static void get_core_name(const char *core_dir, const char *exe_name,
 	time(&now);
 	tm = localtime_r(&now, &tm_buf);
 	snprintf(core_name, PATH_MAX, "%s/core.%d-%lld-%lld_%lld.%s", core_dir,
-			tm->tm_year, (long long)tm->tm_mon, (long long)tm->tm_mday,
+			tm->tm_year + 1900, (long long)tm->tm_mon, (long long)tm->tm_mday,
 			(long long)now, exe_name);
 }
 
