@@ -1,0 +1,7 @@
+*.o
+handle_core
+cscope.*
+ncscope.*
+*.orig
+*~
+\#*#
