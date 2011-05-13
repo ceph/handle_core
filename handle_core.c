@@ -16,7 +16,9 @@
 #include <unistd.h>
 
 #define BUF_SIZE 1024
-#define CORE_PATTERN "core.*"
+#define CORE_PREFIX "core."
+#define CORE_PREFIX_SZ (sizeof(CORE_PREFIX)-1)
+#define MAX_CORE_SCAN 500000
 
 /*
  * Core file handler
@@ -27,49 +29,88 @@
  *			/proc/sys/kernel/core_pattern
  */
 
-/* Count the number of core files we have. */
-static int count_core_files(const char *core_dir)
+/* Compare two core file names. We want reverse alphabetical order */
+static int compare_core_file_names(const void *a, const void *b)
 {
-	struct dirent *de;
-	int count = 0;
-	DIR *dp = opendir(core_dir);
-	if (!dp) {
-		int err = errno;
-		return -err;
-	}
-
-	while (1) {
-		de = readdir(dp);
-		if (!de)
-			break;
-		if (fnmatch(CORE_PATTERN, de->d_name, 0) == 0) {
-			count++;
-		}
-	}
-	closedir(dp);
-	return count;
+	const char *ca = *((const char **)a);
+	const char *cb = *((const char **)b);
+	return strcmp(cb, ca);
 }
 
-/* Unlink the core which sorts the first in the glob sort order. */
-static int unlink_core(const char *core_dir)
+/* Step through core_dir and delete core files which have old looking names */
+static int limit_core_files(const char *core_dir, int max_cores)
 {
-	int ret;
-	char path[PATH_MAX];
-	glob_t g;
+	int deleted = 0, i, ret, num_cores = 0, alloc_cores = 64;
+	DIR *dp;
+	char **cores = malloc(sizeof(char*) * alloc_cores);
 
-	snprintf(path, PATH_MAX, "%s/%s", core_dir, CORE_PATTERN);
-	ret = glob(path, GLOB_ERR, NULL, &g);
-	if (ret != 0) {
-		return EIO;
+	if (cores == NULL) {
+		ret = -ENOMEM;
+		goto done;
 	}
-	if (g.gl_pathc == 0)
-		return ENOENT;
-	if (unlink(g.gl_pathv[0])) {
-		globfree(&g);
-		return errno;
+	dp = opendir(core_dir);
+	if (!dp) {
+		ret = -errno;
+		goto done;
 	}
-	globfree(&g);
-	return 0;
+	/* Scan through core files. If the number of files we're looking at is
+	 * getting too large, we content ourselves with just what we've already
+	 * scanned. This does mean we could delete newer files than we really
+	 * intend. However, we need to avoid allocating a ridiculous amount of
+	 * memory.
+	 */
+	while (1) {
+		struct dirent *de = readdir(dp);
+		if (!de)
+			break;
+		/* ignore non-core files */
+		if (strncmp(de->d_name, CORE_PREFIX, CORE_PREFIX_SZ))
+			continue;
+		cores[num_cores] = strdup(de->d_name);
+		if (!cores[num_cores])
+			break;
+		num_cores++;
+		if (num_cores > MAX_CORE_SCAN)
+			break;
+		if (num_cores == alloc_cores) {
+			char **newptr = realloc(cores, sizeof(char*) * alloc_cores * 2);
+			if (!newptr)
+				break;
+			cores = newptr;
+			alloc_cores *= 2;
+		}
+	}
+	qsort(cores, num_cores, sizeof(char**), compare_core_file_names);
+	/* delete core files which are too old. */
+	for (i = num_cores - 1; i >= max_cores; i--) {
+		char path[PATH_MAX];
+		snprintf(path, sizeof(path), "%s/%s", core_dir, cores[i]);
+		if (unlink(path) == 0) {
+			deleted++;
+			continue;
+		}
+		/* ignore ENOENT here. We may be racing with another
+		 * handle_core process which deleted the old core first. */
+		ret = -errno;
+		if (ret != -ENOENT) {
+			syslog(LOG_USER | LOG_ERR, "unlink(%s) "
+				"error: %d (%s)",
+				cores[i], ret, strerror(ret));
+			goto done;
+		}
+	}
+	ret = deleted;
+done:
+	if (cores) {
+		for (i = 0; i < num_cores; ++i) {
+			if (cores[i])
+				free(cores[i]);
+		}
+		free(cores);
+	}
+	if (dp)
+		closedir(dp);
+	return ret;
 }
 
 /* Print the new core name into a buffer of size PATH_MAX */
@@ -190,12 +231,10 @@ core file name: %s/%s\r\n\
 
 int main(int argc, char **argv)
 {
-	int ret, done = 0;
+	int max_cores, deleted, ret, done = 0;
 	char *exe_name, *core_dir, *email;
 	char core_name[PATH_MAX];
 	FILE *fp;
-	int num_coref, num_deleted;
-	int max_cores;
 
 	/* Write the core to a file */
 	ret = parse_options(argc, argv, &max_cores, &exe_name, &core_dir,
@@ -240,21 +279,10 @@ int main(int argc, char **argv)
 	fclose(fp);
 
 	/* Make sure we don't have too many cores sitting around. */
-	num_coref = count_core_files(core_dir);
-	num_deleted = 0;
-	if (num_coref < 0) {
-		syslog(LOG_USER | LOG_ERR, "count_core_files failed with error "
-		       "code %d\n", num_coref);
-		return num_coref;
-	}
-	while (num_coref > max_cores) {
-		int ret = unlink_core(core_dir);
-		if (ret) {
-			syslog(LOG_USER | LOG_ERR, "unlink_core failed with error "
-			       "code %d\n", ret);
-		}
-		num_coref--;
-		num_deleted++;
+	deleted = limit_core_files(core_dir, max_cores);
+	if (deleted < 0) {
+		syslog(LOG_USER | LOG_ERR, "error limiting number of core "
+			"files: %d", deleted);
 	}
 
 	ret = send_mail(exe_name, core_dir, core_name, email);
@@ -264,6 +292,6 @@ int main(int argc, char **argv)
 	}
 
 	syslog(LOG_USER | LOG_ERR, "wrote core %s. Deleted %d extra core%s\n",
-	       core_name, num_deleted, ((num_deleted == 1) ? "" : "s"));
+	       core_name, deleted, ((deleted == 1) ? "" : "s"));
 	return 0;
 }
