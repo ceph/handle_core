@@ -1,6 +1,6 @@
 CC=gcc
 
-CFLAGS=-Wall
+CFLAGS=-Wall -Wextra
 
 all: handle_core
 
