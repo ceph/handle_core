@@ -1,0 +1,21 @@
+This is a little program which is designed to handle core dumps.
+
+On Linux, if the first character of the /proc/sys/kernel/core_pattern is a pipe
+symbol (|), the remainder of the line is interpreted as a program to be
+executed. The core dump is given as standard input to the program. This
+functionality was implemented in Linux 2.6.19.
+
+Here, we take advantage of this flexibility to implement a few features that
+are kind of nice to have in a core dump handler. First, we limit the number of
+core files that can be on disk, deleting ones which are too old. Second, we
+provide a better notification mechanism than just logging to syslog.
+
+An example usage might look like this:
+echo "|/usr/bin/handle_core -e %e -d /home/core -m 10" > \
+        /proc/sys/kernel/core_pattern
+
+I hope this is useful! See COPYING for the license.
+
+regards,
+Colin McCabe 
+cmccabe@alumni.cmu.edu
