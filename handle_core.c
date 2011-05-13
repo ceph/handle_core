@@ -1,10 +1,11 @@
 #include <ctype.h>
-#include <errno.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <glob.h>
 #include <limits.h>
+#include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +22,9 @@
  * Core file handler
  *
  * Example usage:
- * echo "|/usr/bin/handle_core -e %e -d /home/core -m 10" > \
- * 	/proc/sys/kernel/core_pattern
+ * echo "|/sbin/handle_core -e %e -d /var/core -m 10 \
+ *		-s '/usr/sbin/sendmail -t sysadmin@example.com'" > \
+ *			/proc/sys/kernel/core_pattern
  */
 
 /* Count the number of core files we have. */
@@ -92,17 +94,20 @@ static void usage(void)
 -h				This help message\n\
 -m <max_cores>			This maximum number of core files to allow\n\
 				before deleting older core files.\n\
+-s <email_command>		Send email using email_command.\n\
+				Example: -s '/usr/sbin/sendmail -t sysadmin@example.com'\n\
 ");
 }
 
 static int parse_options(int argc, char **argv, int *max_cores,
-			  char **exe_name, char **core_dir)
+			  char **exe_name, char **core_dir, char **email)
 {
 	int c;
 	*max_cores = 10;
 	*exe_name = NULL;
 	*core_dir = "/var/core";
-	while ((c = getopt(argc, argv, "d:e:hm:")) != -1) {
+	*email = NULL;
+	while ((c = getopt(argc, argv, "d:e:hm:s:")) != -1) {
 		switch (c) {
 		case 'd':
 			*core_dir = optarg;
@@ -123,6 +128,9 @@ static int parse_options(int argc, char **argv, int *max_cores,
 				return 1;
 			}
 			break;
+		case 's':
+			*email = optarg;
+			break;
 		default:
 			fprintf(stderr, "handle_core: invalid usage\n\n");
 			return 1;
@@ -137,17 +145,61 @@ static int parse_options(int argc, char **argv, int *max_cores,
 	return 0;
 }
 
+int send_mail(const char *exe_name, const char *core_dir,
+	      const char *core_name, const char *email)
+{
+	char hostname[255];
+	struct hostent *fqdn;
+	const char *fqdn_name;
+	FILE *fp;
+
+	if (!email)
+		return 0;
+	fp = popen(email, "w");
+	if (!fp) {
+		int err = errno;
+		syslog(LOG_USER | LOG_ERR, "popen(%s) error: %d (%s)",
+			email, err, strerror(err));
+		return err;
+	}
+	if (gethostname(hostname, sizeof(hostname))) {
+		int err = errno;
+		syslog(LOG_USER | LOG_ERR, "gethostname error: %d (%s)",
+			err, strerror(err));
+		snprintf(hostname, sizeof(hostname), "(unknown-host)");
+	}
+	fqdn = gethostbyname(hostname);
+	if (!fqdn) {
+		int err = h_errno;
+		syslog(LOG_USER | LOG_ERR, "gethostbyname(%s) error: %d",
+			hostname, err);
+		fqdn_name = hostname;
+	}
+	else {
+		fqdn_name = fqdn->h_name;
+	}
+	fprintf(fp, "\
+Subject: [core_dump] %s crashed on %s\r\n\r\n\
+!!!!! Crash encountered on %s !!!!!!!!!\r\n\
+executable name: %s\r\n\
+core file name: %s/%s\r\n\
+", exe_name, hostname, fqdn_name, exe_name, core_dir, core_name);
+	fclose(fp);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	int ret, done = 0;
-	char *exe_name, *core_dir;
+	char *exe_name, *core_dir, *email;
 	char core_name[PATH_MAX];
 	FILE *fp;
 	int num_coref, num_deleted;
 	int max_cores;
 
 	/* Write the core to a file */
-	ret = parse_options(argc, argv, &max_cores, &exe_name, &core_dir);
+	ret = parse_options(argc, argv, &max_cores, &exe_name, &core_dir,
+			    &email);
 	if (ret) {
 		syslog(LOG_USER | LOG_ERR, "parse_options error\n");
 		return 1;
@@ -203,6 +255,12 @@ int main(int argc, char **argv)
 		}
 		num_coref--;
 		num_deleted++;
+	}
+
+	ret = send_mail(exe_name, core_dir, core_name, email);
+	if (ret) {
+		syslog(LOG_USER | LOG_ERR, "send_mail failed with error "
+		       "code %d\n", ret);
 	}
 
 	syslog(LOG_USER | LOG_ERR, "wrote core %s. Deleted %d extra core%s\n",
