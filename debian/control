@@ -1,0 +1,13 @@
+Source: handle-core
+Section: unknown
+Priority: extra
+Maintainer: Brett Gailey <brettg@womb.sd.dreamhost.com>
+Build-Depends: debhelper (>= 5)
+Standards-Version: 3.7.2
+Homepage: <insert the upstream URL, if relevant>
+
+Package: handle-core
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: <insert up to 60 chars description>
+ <insert long description, indented with spaces>

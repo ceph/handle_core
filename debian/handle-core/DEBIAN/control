@@ -1,0 +1,10 @@
+Package: handle-core
+Version: 1.0-1
+Architecture: i386
+Maintainer: Brett Gailey <brettg@womb.sd.dreamhost.com>
+Installed-Size: 56
+Section: unknown
+Priority: extra
+Homepage: <insert the upstream URL, if relevant>
+Description: <insert up to 60 chars description>
+ <insert long description, indented with spaces>
