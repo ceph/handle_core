@@ -12,7 +12,7 @@ handle_core: handle_core.o
 
 install: handle_core.o
 	install -m  644 handle_core.o $(liblocation)
-	install -m  755 handle_coire $(binlocation)
+	install -m  755 handle_core $(binlocation)
 
 clean:
 	rm -rf *o handle_core
