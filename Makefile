@@ -1,7 +1,6 @@
 CC=gcc
 
-liblocation=$(CURDIR)/debian/handle-core/usr/lib
-binlocation=$(CURDIR)/debian/handle-core/usr/bin
+DESTDIR=
 
 CFLAGS=-Wall -Wextra
 
@@ -11,8 +10,8 @@ handle_core: handle_core.o
 	$(CC) $(CFLAGS) handle_core.o -o $@
 
 install: handle_core.o
-	install -m  644 handle_core.o $(liblocation)
-	install -m  755 handle_core $(binlocation)
+	install -m  644 handle_core.o $(DESTDIR)/usr/lib/handle_core.o
+	install -m  755 handle_core $(DESTDIR)/usr/bin/handle_core
 
 clean:
 	rm -rf *o handle_core
